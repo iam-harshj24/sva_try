@@ -486,11 +486,11 @@ def calculate_max_drr_with_push_drr(inventory_data, target_date, future_date, ma
             'ASIN': row.get('ASIN', 'N/A'),
             'Current Inventory': initial_inventory,
             'Max DRR': max_drr,
-            'Ending Inventory': best_ending_inventory,
+            # 'Ending Inventory': best_ending_inventory,
             'Total Shipments Before Future': shipments_before_future,
             'Total Shipments After Future': shipments_after_future,
-            'Manual DRR Used': manual_drr if manual_drr is not None else 'No',
-            'Calculation Start Date': calc_start_date
+            # 'Manual DRR Used': manual_drr if manual_drr is not None else 'No',
+            # 'Calculation Start Date': calc_start_date
         })
     
     return pd.DataFrame(results)
@@ -593,63 +593,19 @@ def calculate_daily_drr(file_path, sheet_name, target_date):
     # with tabs[6]:
     #     add_drr_timeline_tab()
 
-def read_labels_data(uploaded_file, sheet_name):
-    df = pd.read_excel(uploaded_file, sheet_name=sheet_name)
+
     
-import hashlib
-import jwt
-import datetime
-import sqlite3
-import streamlit as st
-from contextlib import contextmanager
+def init_users():
+    if 'users' not in st.session_state:
+        st.session_state.users = {
+            'Harsh': {
+                'password': hashlib.sha256('9838'.encode()).hexdigest(),
+                'role': 'Admin',
+                'permissions': ['overview', 'inventory_status', 'shipment_planning', 'loss_analysis', 
+                 'profit_analysis', 'max_drr', 'drr_timeline', 'labels', 'manage_users']
+            }
+        }
 
-# Database functions
-@contextmanager
-def get_db(db_path="auth.db"):
-    conn = sqlite3.connect(db_path)
-    try:
-        yield conn
-    finally:
-        conn.close()
-
-def init_database():
-    with get_db() as conn:
-        cursor = conn.cursor()
-        # Users table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                username TEXT PRIMARY KEY,
-                password TEXT NOT NULL,
-                role TEXT NOT NULL
-            )
-        ''')
-        # Sessions table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS sessions (
-                token TEXT PRIMARY KEY,
-                username TEXT NOT NULL,
-                expires TIMESTAMP NOT NULL,
-                FOREIGN KEY (username) REFERENCES users (username)
-            )
-        ''')
-        conn.commit()
-
-def init_default_admin():
-    with get_db() as conn:
-        cursor = conn.cursor()
-        # Check if admin exists
-        cursor.execute("SELECT 1 FROM users WHERE username = ?", ("User Harsh",))
-        if not cursor.fetchone():
-            # Create default admin
-            cursor.execute(
-                "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
-                ("User Harsh", 
-                 hashlib.sha256('9838'.encode()).hexdigest(),
-                 "Admin")
-            )
-            conn.commit()
-
-# Authentication functions
 def get_role_permissions():
     return {
         'Admin': ['overview', 'inventory_status', 'shipment_planning', 'loss_analysis', 
@@ -661,147 +617,63 @@ def get_role_permissions():
         'viewer': ['overview']
     }
 
-def create_token(username, secret_key="your-secret-key", expiry_hours=24):
-    expiry = datetime.datetime.utcnow() + datetime.timedelta(hours=expiry_hours)
-    token = jwt.encode(
-        {'username': username, 'exp': expiry},
-        secret_key,
-        algorithm='HS256'
-    )
-    
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO sessions (token, username, expires) VALUES (?, ?, ?)",
-            (token, username, expiry)
-        )
-        conn.commit()
-    
-    return token
-
-def verify_token(token, secret_key="your-secret-key"):
-    try:
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT username FROM sessions WHERE token = ? AND expires > ?",
-                (token, datetime.datetime.utcnow())
-            )
-            result = cursor.fetchone()
-            if result:
-                return result[0]
-    except:
-        pass
-    return None
-
-def login(username, password):
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT role FROM users WHERE username = ? AND password = ?",
-            (username, hashlib.sha256(password.encode()).hexdigest())
-        )
-        result = cursor.fetchone()
-        if result:
-            token = create_token(username)
-            return True, token, result[0]
-    return False, None, None
-
 def add_user(username, password, role):
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT 1 FROM users WHERE username = ?", (username,))
-        if cursor.fetchone():
-            return False, "Username already exists"
-        
-        cursor.execute(
-            "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
-            (username, hashlib.sha256(password.encode()).hexdigest(), role)
-        )
-        conn.commit()
-        return True, "User added successfully"
+    if username in st.session_state.users:
+        return False, "Username already exists"
+    
+    st.session_state.users[username] = {
+        'password': hashlib.sha256(password.encode()).hexdigest(),
+        'role': role,
+        'permissions': get_role_permissions()[role]
+    }
+    return True, "User added successfully"
 
 def remove_user(username):
-    if username == 'User Harsh':
+    if username == 'Harsh':
         return False, "Cannot remove admin user"
-    
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM users WHERE username = ?", (username,))
-        if cursor.rowcount > 0:
-            conn.commit()
-            return True, "User removed successfully"
-        return False, "User not found"
+    if username in st.session_state.users:
+        del st.session_state.users[username]
+        return True, "User removed successfully"
+    return False, "User not found"
 
 def update_user_role(username, new_role):
-    if username == 'User Harsh':
+    if username == 'Harsh':
         return False, "Cannot modify admin role"
-    
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "UPDATE users SET role = ? WHERE username = ?",
-            (new_role, username)
-        )
-        if cursor.rowcount > 0:
-            conn.commit()
-            return True, "Role updated successfully"
-        return False, "User not found"
-
-def get_user_role(username):
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT role FROM users WHERE username = ?", (username,))
-        result = cursor.fetchone()
-        return result[0] if result else None
-
-def get_all_users():
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT username, role FROM users")
-        return cursor.fetchall()
-
-# Streamlit interface functions
-def init_auth():
-    if 'db_initialized' not in st.session_state:
-        init_database()
-        init_default_admin()
-        st.session_state.db_initialized = True
+    if username in st.session_state.users:
+        st.session_state.users[username]['role'] = new_role
+        st.session_state.users[username]['permissions'] = get_role_permissions()[new_role]
+        return True, "Role updated successfully"
+    return False, "User not found"
 
 def check_password():
-    init_auth()
+    init_users()
     
-    # Check for existing token in cookies
-    if 'auth_token' in st.session_state:
-        username = verify_token(st.session_state.auth_token)
-        if username:
-            st.session_state.current_user = username
-            st.session_state.current_role = get_user_role(username)
-            return True
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
 
-    st.title("Login")
-    col1, col2 = st.columns(2)
-    with col1:
-        username = st.text_input("Username")
-    with col2:
-        password = st.text_input("Password", type="password")
+    if not st.session_state.authenticated:
+        st.title("Login")
+        col1, col2 = st.columns(2)
+        with col1:
+            username = st.text_input("Username")
+        with col2:
+            password = st.text_input("Password", type="password")
 
-    if st.button("Login"):
-        success, token, role = login(username, password)
-        if success:
-            st.session_state.auth_token = token
-            st.session_state.current_user = username
-            st.session_state.current_role = role
-            st.rerun()
-        else:
-            st.error("Invalid credentials")
-    return False
+        if st.button("Login"):
+            if username in st.session_state.users and \
+               st.session_state.users[username]['password'] == hashlib.sha256(password.encode()).hexdigest():
+                st.session_state.authenticated = True
+                st.session_state.current_user = username
+                st.session_state.current_role = st.session_state.users[username]['role']
+                st.rerun()
+            else:
+                st.error("Invalid credentials")
+        return False
 
-def has_permission(permission):
-    return permission in get_role_permissions()[st.session_state.current_role]
+    return True
 
 def user_management():
-    if st.session_state.current_user != 'User Harsh':
+    if st.session_state.current_user != 'Harsh':
         st.warning("Only admin can manage users")
         return
 
@@ -821,11 +693,8 @@ def user_management():
                 st.error(message)
 
     with tab2:
-        users = get_all_users()
-        username_to_remove = st.selectbox(
-            "Select User to Remove", 
-            options=[u[0] for u in users if u[0] != 'User Harsh']
-        )
+        username_to_remove = st.selectbox("Select User to Remove", 
+                                        options=[u for u in st.session_state.users.keys() if u != 'Harsh'])
         if st.button("Remove User"):
             success, message = remove_user(username_to_remove)
             if success:
@@ -834,16 +703,11 @@ def user_management():
                 st.error(message)
 
     with tab3:
-        users = get_all_users()
-        username_to_update = st.selectbox(
-            "Select User to Update", 
-            options=[u[0] for u in users if u[0] != 'User Harsh']
-        )
-        new_role = st.selectbox(
-            "Select New Role", 
-            options=list(get_role_permissions().keys()),
-            key="update_role"
-        )
+        username_to_update = st.selectbox("Select User to Update", 
+                                        options=[u for u in st.session_state.users.keys() if u != 'Harsh'])
+        new_role = st.selectbox("Select New Role", 
+                               options=list(get_role_permissions().keys()),
+                               key="update_role")
         if st.button("Update Role"):
             success, message = update_user_role(username_to_update, new_role)
             if success:
@@ -852,24 +716,201 @@ def user_management():
                 st.error(message)
 
     st.write("Current Users:")
-    users = get_all_users()
     user_list = pd.DataFrame(
-        [(user, role, ', '.join(get_role_permissions()[role])) 
-         for user, role in users],
+        [(user, data['role'], ', '.join(data['permissions'])) 
+         for user, data in st.session_state.users.items()],
         columns=["Username", "Role", "Permissions"]
     )
     st.dataframe(user_list)
+
+def has_permission(permission):
+    return permission in st.session_state.users[st.session_state.current_user]['permissions']
+
+def read_us_products_data(uploaded_file, sheet_name="US Products"):
+    """Reads US Products sheet from Excel file and returns a DataFrame with ASIN, AWD, Backstock, and Upcoming Orders."""
+    try:
+        df = pd.read_excel(uploaded_file, sheet_name=sheet_name)
+        df = df[['ASIN','Product Name', 'AWD', 'Backstock', 'Upcoming Orders']].dropna()
+        return df
+    except Exception as e:
+        st.error(f"Error reading {sheet_name} sheet: {e}")
+        return pd.DataFrame()
+    
+def calculate_us_shipment_plan(inventory_status, us_products_data, target_date):
+    if target_date is None:
+        target_date = datetime.now() + timedelta(days=30)
+
+    target_date = pd.to_datetime(target_date)
+    result = inventory_status.copy()
+
+    # Filter inventory status to include only ASINs present in the US Products sheet
+    result = result[result['ASIN'].isin(us_products_data['ASIN'])]
+
+    # Calculate Days until Target
+    result['Days_To_Target'] = (target_date - datetime.today()).days + 1
+    result['Expected_Usage'] = (result['Daily_Run_Rate'] * result['Days_To_Target']).round()
+
+    # Merge inventory data with US Products AWD, Backstock, and Upcoming Order
+    result = result.merge(us_products_data, on='ASIN', how='left').fillna(0)
+    result['Product Name'] = result['Product Name_x']
+
+    # Display all columns (including AWD, Backstock, and Upcoming Orders)
+    result = result[['ASIN', 'Product Name', 'Current Inventory', 'Daily_Run_Rate', 'Expected_Usage',
+                     'Total Upcoming Shipment', 'Days_To_Target', 
+                     'AWD', 'Backstock', 'Upcoming Orders']]
+
+    # Adjust total available inventory
+    result['Total Available Stocks with BS & AWD'] = result['Total Upcoming Shipment'] + result['AWD'] + result['Backstock'] 
+    result['Total Available Stocks with BS,AWD & Orders'] = result['Total Upcoming Shipment'] + result['AWD'] + result['Backstock']+result['Upcoming Orders']
+
+    # Calculate Required Projected Inventory
+    # result['Required Projected Inventory With AWD & BS'] = (result['Expected_Usage'] - result['Total Available Stocks with BS & AWD']).round()
+    result['Required Inventory(AWD+BS+ORDERS)'] = (result['Expected_Usage'] - result['Total Available Stocks with BS,AWD & Orders']).round()
+    # Subtract AWD, Backstock, and Upcoming Orders from Required Projected Inventory
+    # result['Final Required Shipment'] = result['Required Projected Inventory'] - result['AWD'] - result['Backstock'] - result['Upcoming Orders']
+
+    # Ensure Final Required Shipment is not negative
+    # result['Final Required Shipment'] = result['Final Required Shipment'].apply(lambda x: max(x, 0))
+  
+    result.to_csv('us_shipment_pla.csv', index=False)
+    return result
+def process_label_planning(uploaded_file, inventory_status, target_date=None):
+    """Reads label data, merges with inventory data, and calculates label planning details."""
+    try:
+        # Read label data
+        label_data = pd.read_excel(uploaded_file, sheet_name='labels')
+        label_data = label_data[['ASIN', 'Product Name', 'IN Stocks', 'Packed', 'New Orders']].dropna()
+    except Exception as e:
+        st.error(f"Error reading labels sheet: {e}")
+        return pd.DataFrame()
+    
+    if target_date is None:
+        target_date = datetime.now() + timedelta(days=30)
+    target_date = pd.to_datetime(target_date)
+    
+    # Copy inventory status and calculate expected usage
+    result = inventory_status.copy()
+    result['Days_To_Target'] = (target_date - datetime.today()).days + 1
+    result['Expected_Usage'] = (result['Daily_Run_Rate'] * result['Days_To_Target']).round()
+    
+    # Merge label data
+    result = result.merge(label_data, on='ASIN', how='left').fillna(0)
+    result['Product Name'] = result['Product Name_x']
+    
+    # Calculate required inventory
+    result['Total Available Label (Stocks+Packed)'] = result['Total Upcoming Shipment'] + result['IN Stocks'] + result['Packed'] 
+    result['Total Available Label (Stocks+Packed+New Orders)'] = result['Total Available Label (Stocks+Packed)'] + result['New Orders']
+    result['Required Labels (Stocks+Packed+New Orders)'] = (result['Expected_Usage'] - result['Total Available Label (Stocks+Packed+New Orders)']).round()
+    
+    return result[['Date','ASIN', 'Product Name', 'Current Inventory', 'Daily_Run_Rate', 'Expected_Usage',
+                   'Total Upcoming Shipment', 'Days_To_Target', 'IN Stocks', 'Packed', 'New Orders',
+                   'Total Available Label (Stocks+Packed)', 'Total Available Label (Stocks+Packed+New Orders)',
+                   'Required Labels (Stocks+Packed+New Orders)']]
+
+
+import pandas as pd
+import streamlit as st
+
+import pandas as pd
+import streamlit as st
+
+def Performance_Tracker(uploaded_file, sales_sheet="Sales", profit_sheet="Profit", tracker_sheet="Tracker"):
+    """
+    Function to calculate and display average sales, profit, and DRR based on a selected date range,
+    week-over-week analysis, or week-by-year analysis.
+    """
+    try:
+        # Read sales, profit, and tracker data
+        sales_data = pd.read_excel(uploaded_file, sheet_name=sales_sheet)
+        profit_data = pd.read_excel(uploaded_file, sheet_name=profit_sheet)
+        tracker_data = pd.read_excel(uploaded_file, sheet_name=tracker_sheet)
+
+        # Ensure necessary columns exist
+        if not {'ASIN', 'Product Name'}.issubset(sales_data.columns) or not {'ASIN', 'Product Name'}.issubset(profit_data.columns):
+            st.error("Missing 'ASIN' or 'Product Name' columns in the dataset.")
+            return
+
+        # Identify date columns dynamically (all except 'ASIN' & 'Product Name')
+        date_columns_sales = [col for col in sales_data.columns if col not in ['ASIN', 'Product Name']]
+        date_columns_profit = [col for col in profit_data.columns if col not in ['ASIN', 'Product Name']]
+
+        # Convert column names to datetime for sorting and processing
+        date_mapping = {col: pd.to_datetime(col, errors='coerce') for col in date_columns_sales}
+        sorted_dates = sorted(date_mapping.items(), key=lambda x: x[1])
+
+        # Group dates into weeks by year
+        week_groups = {}
+        for col, date in sorted_dates:
+            if pd.notna(date):  # Ensure valid dates
+                year = date.year
+                week_num = date.isocalendar()[1]  # Get ISO week number
+                week_label = f"Week {week_num} ({year})"
+                
+                if week_label not in week_groups:
+                    week_groups[week_label] = []
+                week_groups[week_label].append(col)
+
+        # Add 'Custom' option
+        week_options = list(week_groups.keys()) + ["Custom"]
+        selected_option = st.selectbox("📅 Select Date Range", week_options)
+
+        if selected_option == "Custom":
+            # Custom Date Selection
+            col1, col2 = st.columns(2)
+            sorted_dates_str = [str(date.date()) for _, date in sorted_dates if pd.notna(date)]
+            start_date = col1.selectbox("📅 Select Start Date", sorted_dates_str)
+            end_date = col2.selectbox("📅 Select End Date", sorted_dates_str, index=len(sorted_dates_str) - 1)
+
+            # Convert user-selected dates back to column format
+            selected_dates_sales = [col for col, date in sorted_dates if str(date.date()) >= start_date and str(date.date()) <= end_date]
+        else:
+            # Week-based selection (Week-by-Year)
+            selected_dates_sales = week_groups[selected_option]
+
+        selected_dates_profit = selected_dates_sales  # Assume profit has the same date columns
+
+        # Convert selected date columns to numeric (handling missing or non-numeric data)
+        sales_data[selected_dates_sales] = sales_data[selected_dates_sales].apply(pd.to_numeric, errors='coerce')
+        profit_data[selected_dates_profit] = profit_data[selected_dates_profit].apply(pd.to_numeric, errors='coerce')
+
+        # Calculate average sales & profit for selected date range
+        sales_data["Average Sales"] = sales_data[selected_dates_sales].mean(axis=1)
+        profit_data["Average Profit"] = profit_data[selected_dates_profit].mean(axis=1)
+
+        # Merge sales and profit on ASIN & Product Name
+        Pre_final_data = sales_data[['ASIN', 'Product Name', 'Average Sales']].merge(
+            profit_data[['ASIN', 'Product Name', 'Average Profit']],
+            on=['ASIN', 'Product Name'],
+            how='inner'
+        )
+
+        final_data = Pre_final_data[['ASIN', 'Product Name', 'Average Sales', 'Average Profit']].merge(
+            tracker_data[['ASIN', 'Product Name', 'Target DRR']],
+            on=['ASIN', 'Product Name'],
+            how='inner'
+        )
+        final_data["Performance Status"] = final_data.apply(
+            lambda row: "Leading ✅" if row["Target DRR"] < row["Average Sales"] else "Lagging ⚠️",
+            axis=1
+        )
+
+        # Display results in Streamlit
+        num_days = len(selected_dates_sales)
+        st.write(f"### 📊 Average Sales & Profit Per Product ({selected_option} - {num_days} Days)")
+        st.dataframe(final_data)
+
+    except Exception as e:
+        st.error(f"Error processing file: {str(e)}")
+        st.exception(e)
+
+
+
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 import plotly.express as px
 import tempfile
 import os
-
-def clear_session():
-    # Clear all session state variables
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
 
 def main():
     if not check_password():
@@ -879,16 +920,10 @@ def main():
     st.sidebar.write(f"Role: {st.session_state.current_role}")
     
     if st.sidebar.button("Logout"):
-        # Remove the auth token from session and clear session state
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM sessions WHERE token = ?", 
-                         (st.session_state.auth_token,))
-            conn.commit()
-        clear_session()
+        st.session_state.authenticated = False
         st.rerun()
 
-    if st.session_state.current_user == 'User Harsh':
+    if st.session_state.current_user == 'Harsh':
         if st.sidebar.button("Manage Users"):
             st.session_state.show_user_management = True
         
@@ -930,7 +965,8 @@ def main():
                 profit_data = read_gross_profit(uploaded_file, "Profit")
                 merged_data = merge_sales_and_profit(sales_data, profit_data)
                 inventory_data = read_inventory_data(uploaded_file, "Inventory")
-                labels_data = read_labels_data(uploaded_file,'labels')
+                # label_data = read_labels_data(uploaded_file,'labels')
+                us_products_data = read_us_products_data(uploaded_file, "US Products")
                 # Sidebar: DRR settings
                 st.sidebar.header("DRR Settings")
                 use_manual_drr = st.sidebar.checkbox("Use Manual DRR", value=False)
@@ -990,7 +1026,7 @@ def main():
             # Create tabs
             tabs = st.tabs(["Overview", "Inventory Status", "Shipment Planning", 
                             "Loss Analysis", "Profit Analysis", "Maximum DRR Analysis", 
-                            "DRR Timeline","Labels data"])
+                            "DRR Timeline","Labels data","Target Sales Management","US Products Shipment Planning","Performance Tracker"])
             # Overview Tab
             with tabs[0]:
                 st.header("Overview")
@@ -1213,15 +1249,192 @@ def main():
                     st.warning("Please upload an Excel file to proceed.")
             
             with tabs[7]:
-                st.header("Labels Sheet")
-                st.dataframe(labels_data)            
+                st.header("Labels Planning")
+                
+                if uploaded_file is not None:
+                    target_date = st.date_input(
+                        "Select Target Date for Label Planning",
+                        value=datetime.now() + timedelta(days=30),
+                        min_value=datetime.now(),
+                        key="label_target_date"
+                    )
+
+        # Get the label plan first
+                    label_plan = process_label_planning(uploaded_file, inventory_status, target_date)
+        
+                    if not label_plan.empty:
+            # Apply filters to label plan
+                        filtered_label_plan = label_plan.copy()
+            
+            # Apply date filter if selected
+                        if selected_dates:
+                            filtered_label_plan = filtered_label_plan[
+                                filtered_label_plan['Date'].isin(selected_dates)
+                ]
+            
+            # Apply ASIN filter if selected
+                        if selected_asins:
+                            filtered_label_plan = filtered_label_plan[
+                                filtered_label_plan['ASIN'].isin(selected_asins)
+                            ]
+            
+            # Apply product filter if selected
+                        if selected_products:
+                            filtered_label_plan = filtered_label_plan[
+                                filtered_label_plan['Product Name'].isin(selected_products)
+                            ]
+
+                        st.subheader("Label Plan")
+                        display_columns = [
+                'Date', 'ASIN', 'Product Name', 'Current Inventory', 
+                'Daily_Run_Rate', 'Expected_Usage', 'IN Stocks', 
+                'Packed', 'New Orders', 'Total Available Label (Stocks+Packed)', 
+                'Required Labels (Stocks+Packed+New Orders)'
+                        ]
+            
+                    if all(col in filtered_label_plan.columns for col in display_columns):
+                # Display metrics for the filtered data
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            total_products = len(filtered_label_plan['Product Name'].unique())
+                            st.metric("Total Products", total_products)
+                        with col2:
+                            total_inventory = filtered_label_plan['Current Inventory'].sum()
+                            st.metric("Total Current Inventory", f"{total_inventory:,.0f}")
+                        with col3:
+                            total_required = filtered_label_plan['Required Labels (Stocks+Packed+New Orders)'].sum()
+                            st.metric("Total Required Inventory", f"{total_required:,.0f}")
+
+                # Display the filtered dataframe
+                        st.dataframe(filtered_label_plan[display_columns])
+                
+                # # Add visualizati        
+                # Download button for filtered data
+                        st.download_button(
+                                label="Download Filtered Label Plan",
+                            data=filtered_label_plan.to_csv(index=False),
+                            file_name="filtered_label_plan.csv",
+                            mime="text/csv"
+                        )
+                    else:
+                        st.warning("Some expected columns are missing in the Label Plan data.")
+                else:
+                    st.warning("No valid label data found in the uploaded file.")
+
+            with tabs[8]:
+                st.header("Target Sales Management")
+        # Load or initialize data
+                if 'data' not in st.session_state:
+                    try:
+                        st.session_state.data = pd.read_csv('target_sales_data.csv')
+                    except FileNotFoundError:
+                        st.session_state.data = pd.DataFrame(columns=['Month', 'ASIN', 'Product_Name', 'Units', 'Price', 'Total'])
+                data = st.session_state.data
+        
+        # Define month days
+                month_days = {
+            'January': 31, 'February': 28, 'March': 31, 'April': 30,
+            'May': 31, 'June': 30, 'July': 31, 'August': 31,
+            'September': 30, 'October': 31, 'November': 30, 'December': 31
+                }
+        
+        # Predefined products and ASINs
+                products = pd.DataFrame([
+    {'ASIN': 'B07GNLN5K2', 'Product_Name': 'SVA Peppermint Arvensis 4 Oz'},
+    {'ASIN': 'B07GCQDX6M', 'Product_Name': 'SVA Citronella Oil 4 Oz'},
+    {'ASIN': 'B072M2MTK1', 'Product_Name': 'SVA Rose Water 4 Oz (US)'},
+]
+)
+        
+        # Select month
+                month = st.selectbox("Select Month", options=list(month_days.keys()))
+        
+        # Initialize or load editable data
+                if 'editable_data' not in st.session_state or st.session_state.selected_month != month:
+                    st.session_state.selected_month = month
+                    existing_data = data[data['Month'] == month]
+                    if existing_data.empty:
+                        editable_data = products.copy()
+                        editable_data['Month'] = month
+                        editable_data['Units'] = 0
+                        editable_data['Price'] = 0.0
+                        editable_data['Total'] = 0.0
+                    else:
+                        editable_data = existing_data[['Month', 'ASIN', 'Product_Name', 'Units', 'Price', 'Total']].copy()
+                    st.session_state.editable_data = editable_data
+        
+                enable_edit = st.toggle("Enable Editing")
+        
+                st.subheader(f"Set Targets for {month}")
+                if enable_edit:
+                    edited_data = st.data_editor(
+                        st.session_state.editable_data[['ASIN', 'Product_Name', 'Units', 'Price']],
+                        num_rows="fixed", key="edit_table"
+                    )
+                    if st.button("Save Targets"):
+                        edited_data['Month'] = month
+                        edited_data['Total'] = edited_data['Units'] * edited_data['Price'] * month_days[month]
+                
+                        data = data[data['Month'] != month]
+                        data = pd.concat([data, edited_data], ignore_index=True)
+                
+                        st.session_state.data = data
+                        data.to_csv('target_sales_data.csv', index=False)
+                        st.success(f"Targets for {month} saved successfully!")
+                else:
+                    st.dataframe(st.session_state.editable_data[['ASIN', 'Product_Name', 'Units', 'Price', 'Total']])
+     
+            with tabs[9]:  # Ensure tab indexing is correct
+                st.header("US Products Shipment Planning")
+
+                if not us_products_data.empty:
+                    # st.subheader("Fetched AWD, Backstock, and Upcoming Orders for US Products")
+                    # st.dataframe(us_products_data)
+
+                    target_date = st.date_input("Select Target Date for Shipment Planning",
+                                                value=datetime.now() + timedelta(days=30),
+                                                min_value=datetime.now(),
+                                                key="us_target_date")
+
+                    us_shipment_plan = calculate_us_shipment_plan(filtered_inventory_status, us_products_data, target_date)
+
+                    st.subheader("Updated Shipment Plan (US Products)")
+                    display_columns =[
+                    'ASIN', 'Product Name', 'Current Inventory', 
+                    'Daily_Run_Rate', 'Expected_Usage', 'Total Upcoming Shipment', 
+                    'AWD','Backstock',"Upcoming Orders",'Required Inventory(AWD+BS+ORDERS)']
+                    st.dataframe(us_shipment_plan[display_columns])
+
+
+                    # # Visualization
+                    # fig_us_shipment = px.bar(us_shipment_plan, x='Product Name', y='Final Required Shipment',
+                    #                          title='Updated Required Shipment Quantities (US Products)')
+                    # fig_us_shipment.update_layout(xaxis_tickangle=-45)
+                    # st.plotly_chart(fig_us_shipment, use_container_width=True)
+                    
+                    # Download option
+                    st.download_button(label="Download US Shipment Plan",
+                                       data=us_shipment_plan.to_csv(index=False),
+                                       file_name="us_shipment_plan.csv",
+                                       mime="text/csv")
+                else:
+                    st.warning("No US Products data found in the uploaded file.")
 
         except Exception as e:
             st.error("Error processing data")
             st.exception(e)
+
+
+        with tabs[10]:
+                st.title("📊 Sales & Profit Analysis Tool")
+                st.write("Upload an Excel file containing sales and profit data to analyze the average sales and profit for a selected date range.")
+
+                Performance_Tracker(uploaded_file)
+
+
         if has_permission('read'):
-             st.title("Inventory Management Dashboard")
-        # ... rest of your existing code ...
+             st.title("SVA Analytics")
+       
     else:
         pass
 
